@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <signal.h>
 /* this is doing some heavylifting for us. I would like to do it myself so that
- * I learn more
+ * I learn more.
  * */
 #include <ucontext.h>
 
