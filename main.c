@@ -3,6 +3,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
+/* this is doing some heavylifting for us. I would like to do it myself so that
+ * I learn more
+ * */
 #include <ucontext.h>
 
 #ifndef bool
@@ -13,16 +16,19 @@ typedef char bool;
 
 static ucontext_t main_context;
 
+struct coroutine;
+typedef void (*corofunc)(struct coroutine *);
 typedef struct coroutine {
     void* stack;
     size_t stack_size;
     ucontext_t context;
-    int (*function)(struct coroutine*);
+    corofunc function;
     int yield_value;
     bool is_finished;
 } coroutine_t;
 
-coroutine_t* coroutine_create(int (*func)(coroutine_t*), size_t stack_size)
+
+coroutine_t* coroutine_create(corofunc* func, size_t stack_size)
 {
     coroutine_t* coro = malloc(sizeof(coroutine_t));
     if (coro == NULL) return NULL;
@@ -67,18 +73,29 @@ static inline int coroutine_resume(coroutine_t* coro)
     return coro->yield_value;
 }
 
-int example_coroutine(coroutine_t* coro) {
+static inline int coroutine_exit(coroutine_t *coro, int retcode)
+{
+    if (coro->is_finished) return coro->yield_value;
+    coro->is_finished = true;
+    return coroutine_yield(coro, retcode);
+}
+
+void example_coroutine(coroutine_t* coro) {
     printf("Coroutine started\n");
+    printf("Coroutine about to yield...\n");
     coroutine_yield(coro, 1);
     printf("Coroutine resumed\n");
+    printf("Coroutine about to yield...\n");
     coroutine_yield(coro, 2);
     printf("Coroutine finished\n");
-    return 0;
+    /* Returing would close the program! */
+    /* return 0; */
+    coroutine_exit(coro, 0);
 }
 
 int main() {
     printf("Hello world!\n"
-            "This is test program showing how a coroutine could work\n");
+            "This is a test program demonstrating how a coroutine can be implemented\n");
     // Get the main context that we are at righ now
     getcontext(&main_context);
     printf("About to lunch a coroutine...\n");
@@ -88,7 +105,7 @@ int main() {
         return 1;
     }
 
-    printf("Main: Resuming coroutine\n");
+    printf("Main: lunch a coroutine\n");
     int result = coroutine_resume(coro);
     printf("Main: Coroutine yielded %d\n", result);
 
@@ -98,7 +115,10 @@ int main() {
 
     printf("Main: Resuming coroutine final time\n");
     result = coroutine_resume(coro);
-    printf("Main: Coroutine finished\n");
+    printf("Main: Coroutine finished (ret=%d)\n", result);
+    /* printf("Main: Resuming finished coroutine\n"); */
+    /* result = coroutine_resume(coro); */
+    /* printf("Main: ret=%d\n", result); */
 
     coroutine_destroy(coro);
     return 0;
