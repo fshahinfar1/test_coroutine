@@ -1,17 +1,26 @@
-// vim: set et ts=4 sw=4:
+/* vim: set et ts=4 sw=4: */
+/* @description:
+ *   In this project I am trying to implement a coroutine mechanism
+ *   in C (For learning purposes).
+ * @author: Farbod Shahinfar
+ * @date: 2024
+ * */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
 #include <assert.h>
 
+#define USE_POSIX 1
 #ifdef USE_POSIX
-/* this is doing some heavylifting for us. I would like to do it myself so that
- * I learn more.
+/* POSIX provides an API for managing a processing context. It is a nice
+ * starting point because it is doing some heavylifting for us. But, eventually
+ * I would like to do it myself so that I learn more.
  * */
 #include <ucontext.h>
 #else
 /* This is the context handling code (simplistic replacement of ucontext.h)
+ * The code is inspired by the glibc implementation
  * inspired by: https://codebrowser.dev/glibc/glibc/sysdeps/x86_64/sys/ucontext.h.html
  * */
 #define NUM_REG 18
@@ -38,110 +47,61 @@ enum
 };
 
 typedef struct context {
-    void *stack;
-    unsigned long stack_size;
+    /* NOTE: in my implementation, it is important that registers defined at
+     * the top.
+     * */
     unsigned long regs[NUM_REG];
-} cntx_t;
+    unsigned long stack_size;
+    void *stack;
+} __attribute__((packed)) cntx_t;
 
 void __should_never_called(void)
 {
     printf("-- hehe, this is funny ;)\n");
+    for (;;) {}
 }
 
-static inline __attribute__((always_inline))
+__attribute__((noinline))
 void getcontext(cntx_t *ctx)
 {
-    /* Save general purpose register
-     * RSP,RBP,RIP,RFLAGS will be saved later
+    /* Get a snapshot of registers.
+     *
+     * NOTE: RDI is the first parameter of the function so it already holds the
+     * pointer to context. The registers are stored at the top of the context.
+     *
+     * NOTE: Do not inline the function to make sure that RDI will be set to
+     * the context pointer.
      * */
-    __asm__ (
-            "movq %%r8,  %0\n\t"
-            "movq %%r9,  %1\n\t"
-            "movq %%r10, %2\n\t"
-            "movq %%r11, %3\n\t"
-            "movq %%r12, %4\n\t"
-            "movq %%r13, %5\n\t"
-            "movq %%r14, %6\n\t"
-            "movq %%r15, %7\n\t"
-            "movq %%rdi, %8\n\t"
-            "movq %%rsi, %9\n\t"
-            "movq %%rbp, %10\n\t"
-            "movq %%rsp, %11\n\t"
-            "movq %%rbx, %12\n\t"
-            "movq %%rdx, %13\n\t"
-            "movq %%rcx, %14\n\t"
-            "movq %%rax, %15\n\t"
+    __asm__ ("movq %%r8, 0(%%rdi)\n\t"
+            "movq %%r9,  8(%%rdi)\n\t"
+            "movq %%r10, 16(%%rdi)\n\t"
+            "movq %%r11, 24(%%rdi)\n\t"
+            "movq %%r12, 32(%%rdi)\n\t"
+            "movq %%r13, 40(%%rdi)\n\t"
+            "movq %%r14, 48(%%rdi)\n\t"
+            "movq %%r15, 56(%%rdi)\n\t"
+            "movq %%rdi, 64(%%rdi)\n\t"
+            "movq %%rsi, 72(%%rdi)\n\t"
+            "movq %%rbp, 80(%%rdi)\n\t"
+            "movq %%rsp, 88(%%rdi)\n\t"
+            "movq %%rbx, 96(%%rdi)\n\t"
+            "movq %%rdx, 104(%%rdi)\n\t"
+            "movq %%rcx, 112(%%rdi)\n\t"
+            "movq %%rax, 120(%%rdi)\n\t"
             : /* Output operants */
-            "=m" (ctx->regs[0]),
-            "=m" (ctx->regs[1]),
-            "=m" (ctx->regs[2]),
-            "=m" (ctx->regs[3]),
-            "=m" (ctx->regs[4]),
-            "=m" (ctx->regs[5]),
-            "=m" (ctx->regs[6]),
-            "=m" (ctx->regs[7]),
-            "=m" (ctx->regs[8]),
-            "=m" (ctx->regs[9]),
-            "=m" (ctx->regs[10]),
-            "=m" (ctx->regs[11]),
-            "=m" (ctx->regs[12]),
-            "=m" (ctx->regs[13]),
-            "=m" (ctx->regs[14]),
-            "=m" (ctx->regs[15])
             : /* Input operands */
-            : "memory" );
+            : "memory");
 }
 
-static inline __attribute__((always_inline))
-void setcontext(cntx_t *ctx)
-{
-    __asm__ (
-            /* "movq %0, %%r8\n\t" */
-            "movq %1, %%r9\n\t"
-            "movq %2, %%r10\n\t"
-            "movq %3, %%r11\n\t"
-            "movq %4, %%r12\n\t"
-            "movq %5, %%r13\n\t"
-            "movq %6, %%r14\n\t"
-            "movq %7, %%r15\n\t"
-            "movq %8, %%rdi\n\t"
-            "movq %9, %%rsi\n\t"
-            "movq %10, %%rbp\n\t"
-            "movq %11, %%rsp\n\t"
-            "movq %12, %%rbx\n\t"
-            "movq %13, %%rdx\n\t"
-            "movq %14, %%rcx\n\t"
-            "movq %15, %%rax\n\t"
-            : /* Output operand */
-            : /* Input operand */
-            "m" (ctx->regs[0]),
-            "m" (ctx->regs[1]),
-            "m" (ctx->regs[2]),
-            "m" (ctx->regs[3]),
-            "m" (ctx->regs[4]),
-            "m" (ctx->regs[5]),
-            "m" (ctx->regs[6]),
-            "m" (ctx->regs[7]),
-            "m" (ctx->regs[8]),
-            "m" (ctx->regs[9]),
-            "m" (ctx->regs[10]),
-            "m" (ctx->regs[11]),
-            "m" (ctx->regs[12]),
-            "m" (ctx->regs[13]),
-            "m" (ctx->regs[14]),
-            "m" (ctx->regs[15])
-            : /* I will update the return address which is on the memory */
-            "memory");
-}
-
-/* Here we have the coroutine library definitions.
+/* Prepare the stack (of a newly created coroutine) as if it is entering the
+ * function
  * inspired by: https://codebrowser.dev/glibc/glibc/sysdeps/unix/sysv/linux/x86_64/makecontext.c.html
  * */
-static void makecontext(cntx_t *ctx, void *func, size_t count_args, void *arg)
+void makecontext(cntx_t *ctx, void *func, size_t count_args, void *arg)
 {
+    /* NOTE: The function only receives one argument of type pointer */
     assert (count_args == 1);
     char *sp;
-    char *bp;
     sp = ctx->stack + ctx->stack_size;
     /* Save some space for link (?) */
     sp -= 8;
@@ -151,14 +111,19 @@ static void makecontext(cntx_t *ctx, void *func, size_t count_args, void *arg)
      * return)
      * */
     sp -= 8;
+    /* Why the order is like this? First arguments and link, then aligning and
+     * then return address ??
+     * */
 
-    /* printf("makecontext: storing RIP=%p\n", func); */
     ctx->regs[REG_RIP] = (unsigned long)func;
     /* Why we are setting RBX? */
     ctx->regs[REG_RBX] = (unsigned long)(sp + 8);
     ctx->regs[REG_RSP] = (unsigned long)sp;
     /* when should I set RBP? what is the difference between RSP and RBP? */
     ctx->regs[REG_RBP] = (unsigned long)sp;
+
+    /* printf("makecontext: RIP=%p\n", func); */
+    /* printf("makecontext: RSP=%p\n", sp); */
 
     /* What is a shadow stack ?? */
 
@@ -171,58 +136,66 @@ static void makecontext(cntx_t *ctx, void *func, size_t count_args, void *arg)
 
 /* Save the active context into `out' and replace it with `in'
  *
- * note: not inlining the function otherwise the `lbl1' symbol to be defined
+ * NOTE: not inlining the function otherwise the `lbl1' symbol to be defined
  * multiple times (compile error).
  * */
-static __attribute__((noinline))
+__attribute__((noinline))
 void swapcontext(cntx_t *out, cntx_t *in)
 {
-    /* A local variable on the stack */
-    unsigned long __tmp_reg;
     /* store context into out */
     getcontext(out);
-    /* store lbl1 address as RIP. When we swap back the code will continue from
+
+    /* store lbl1 address in RIP. When we swap back the code will continue from
      * there.
-     * Also the swap back procedure (asm below this), uses R8. we should store
-     * it on the stack and restore it from the stack.
      *
-     * note: using `$lbl1f' (absolute address of lbl1)
+     * NOTE: using `$lbl1f' (absolute address of lbl1)
      * caused issue with generating PIE (place
-     * independent executable). It tried to do a relative addressing.
+     * independent executable). I tried to do a relative addressing.
      * https://stackoverflow.com/questions/71482016/relocation-r-x86-64-32s-against-symbol-stdoutglibc-2-2-5-can-not-be-used-whe
      * */
-    __asm__("movq %%r8, %0\n\t"
-            "lea lbl1(%%rip), %%r8\n\t"
-            "movq %%r8, %1\n\t"
-            : "=m" (__tmp_reg),
-              "=m" (out->regs[REG_RIP])
-            : /*no input*/
-            : "memory"
-            );
-    printf("swapcontext: target RIP: %p\n", (void *)in->regs[REG_RIP]);
-    /* move the target instruction address to R8 */
-    __asm__("movq %0, %%r8\n\t"
+    __asm__("lea lbl1(%%rip), %%r12\n\t"
+            "movq %%r12, 128(%%rdi)\n\t"
             :
-            : "m" (in->regs[REG_RIP])
-            : );
-    /* load register values (except R8) from the input context */
-    setcontext(in);
-    __asm__( "jmp *%%r8\n\t"
-            : /* no output */
-            :
-            : "memory");
-    /* Labeling the return address
-     * When we switch back, we continue from here!
-     * Restore the RAX value from the stack
+            : /* no input */
+            : "r12", "memory");
+
+    /* load register values from the input context */
+    __asm__("movq 0(%%rsi), %%r8\n\t"
+            "movq 8(%%rsi), %%r9\n\t"
+            "movq 16(%%rsi), %%r10\n\t"
+            "movq 24(%%rsi), %%r11\n\t"
+            "movq 32(%%rsi), %%r12\n\t"
+            "movq 40(%%rsi), %%r13\n\t"
+            "movq 48(%%rsi), %%r14\n\t"
+            "movq 56(%%rsi), %%r15\n\t"
+            /* let's ignore RDI and RSI */
+            /* "movq 64(%%rsi), %%rdi\n\t" */
+            /* "movq 72(%%rsi), %%rsi\n\t" */
+            "movq 80(%%rsi), %%rbp\n\t"
+            "movq 88(%%rsi), %%rsp\n\t"
+            "movq 96(%%rsi), %%rbx\n\t"
+            "movq 104(%%rsi), %%rdx\n\t"
+            "movq 112(%%rsi), %%rcx\n\t"
+            "movq 120(%%rsi), %%rax\n\t"
+            /* move the target RIP to the RSI (below) */
+            "movq 128(%%rsi), %%rsi\n\t"
+            : : : );
+
+    /* moved the target RIP to a tmp register (RSI is the second argument)
+     * RIP is stored at offset=128 from top of the context structure.
      * */
-    __asm__("lbl1: movq %0, %%r8"
-            : /* not output */
-            : "m" (__tmp_reg)
-            : "memory"
-            );
+
+    /* Do an indirect jump to the new RIP (address stored in RSI) */
+    __asm__( "jmpq *%%rsi\n\t" : : : );
+
+    /* Labeling the return address.
+     * When we switch back, we continue from here!
+     * */
+    __asm__("lbl1:\n\t" : : : );
 }
 #endif
 
+/* Coroutine library built on top of context management helpers */
 #ifndef bool
 typedef char bool;
 #define false 0
@@ -230,21 +203,19 @@ typedef char bool;
 #endif
 
 #ifdef USE_POSIX
-static ucontext_t main_context;
+typedef ucontext_t CONTEXT;
 #else
-static cntx_t main_context;
+typedef cntx_t CONTEXT;
 #endif
+
+static CONTEXT main_context;
 
 struct coroutine;
 typedef void (*corofunc)(struct coroutine *);
 typedef struct coroutine {
     void* stack;
     size_t stack_size;
-#ifdef USE_POSIX
-    ucontext_t context;
-#else
-    cntx_t context;
-#endif
+    CONTEXT context;
     corofunc function;
     int yield_value;
     bool is_finished;
@@ -313,6 +284,7 @@ static inline int coroutine_exit(coroutine_t *coro, int retcode)
  * */
 void example_coroutine(coroutine_t* coro) {
     printf("Coroutine started\n");
+    /* printf("-- think main is at %p\n", (void *)main_context.regs[REG_RIP]); */
     printf("Coroutine about to yield...\n");
     coroutine_yield(coro, 1);
     printf("Coroutine resumed\n");
@@ -327,6 +299,8 @@ void example_coroutine(coroutine_t* coro) {
 int main() {
     printf("Hello world!\n"
             "This is a test program demonstrating how a coroutine can be implemented\n");
+    printf("main function at %p\n", &main);
+    printf("Targer coroutine is at %p\n", &example_coroutine);
     // Get the main context that we are at righ now
     getcontext(&main_context);
     printf("About to lunch a coroutine...\n");
