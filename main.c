@@ -89,9 +89,14 @@ void getcontext(cntx_t *ctx)
             "movq %%rdx, 104(%0)\n\t"
             "movq %%rcx, 112(%0)\n\t"
             "movq %%rax, 120(%0)\n\t"
+            "pushfq\n\t"
+            "movq (%%rsp), %%rsi\n\t"
+            "movq %%rsi, 136(%0)\n\t"
+            "popfq\n\t"
+            "movq 72(%0), %%rsi\n\t"
             : /* Output operants */
             : /* Input operands */
-            "r" (ctx)
+            "D" (ctx)
             : "memory");
 }
 
@@ -156,7 +161,14 @@ void swapcontext(cntx_t *out, cntx_t *in)
             : "r12", "memory");
 
     /* load register values from the input context */
-    __asm__("movq 0(%%rsi), %%r8\n\t"
+    __asm__(
+            /* restore RFLAGS */
+            "subq $8, %%rsp\n\t" 
+            "movq 136(%%rsi), %%r12\n\t"
+            "movq %%r12, (%%rsp)\n\t"
+            "popfq\n\t"
+            /* copy register */
+            "movq 0(%%rsi), %%r8\n\t"
             "movq 8(%%rsi), %%r9\n\t"
             "movq 16(%%rsi), %%r10\n\t"
             "movq 24(%%rsi), %%r11\n\t"
@@ -167,28 +179,28 @@ void swapcontext(cntx_t *out, cntx_t *in)
             "movq 64(%%rsi), %%rdi\n\t"
             "movq 80(%%rsi), %%rbp\n\t"
             "movq 88(%%rsi), %%rsp\n\t"
-            /* Let's ignore RBX */
-            /* "movq 96(%%rsi), %%rbx\n\t" */
+            "movq 96(%%rsi), %%rbx\n\t"
             "movq 104(%%rsi), %%rdx\n\t"
             "movq 112(%%rsi), %%rcx\n\t"
+            /* Let's ignore RAX */
             "movq 120(%%rsi), %%rax\n\t"
-            /* move the target RIP to the RBX (see comment below) */
-            "movq 128(%%rsi), %%rbx\n\t"
+            /* move the target RIP to the RAX (see comment below) */
+            "movq 128(%%rsi), %%rax\n\t"
             /* restore RSI value */
             "movq 72(%%rsi), %%rsi\n\t"
             : : :
             "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "rdi", "rsi",
-        "rdx", "rcx", "rax", "rsp"
+        "rdx", "rcx", "rax", "cc"
             );
 
-    /* moved the target RIP to a tmp register (RBX is the second argument)
+    /* moved the target RIP to a tmp register (RAX is the second argument)
      * RIP is stored at offset=128 from top of the context structure.
      * NOTE: selecting the register to mess with seems to be important because
      * the program that we are jumping too may rely on it.
      * */
 
-    /* Do an indirect jump to the new RIP (address stored in RBX) */
-    __asm__( "jmpq *%%rbx\n\t" : : : );
+    /* Do an indirect jump to the new RIP (address stored in RAX) */
+    __asm__( "jmpq *%%rax\n\t" : : : );
 
     /* Labeling the return address.
      * When we switch back, we continue from here!
